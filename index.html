@@ -162,6 +162,14 @@
   .btn:active{ transform:scale(0.99); }
   .btn.secondary{ background:none; color:var(--ink); border:1.5px solid var(--ink); }
   .btn.danger{ background:none; color:var(--red); border:1.5px solid var(--red); padding:7px 10px; font-size:12px; }
+  .btn.edit{ background:none; color:var(--ink); border:1.5px solid var(--line); padding:7px 10px; font-size:12px; }
+  .entry-actions{ display:flex; gap:6px; flex-shrink:0; }
+  .form-actions{ display:flex; gap:10px; }
+  .form-actions .btn{ flex:1; }
+  .editing-badge{
+    display:inline-block; font-size:10px; font-weight:700; padding:4px 9px; border-radius:20px;
+    background:var(--ink); color:var(--paper); text-transform:uppercase; letter-spacing:.05em; margin-bottom:8px;
+  }
 
   ul.entries{ list-style:none; margin:0; padding:0; }
   ul.entries li{
@@ -259,7 +267,8 @@
   </div>
 
   <div class="card">
-    <h2>Eintrag hinzufügen</h2>
+    <h2 id="formHeading">Eintrag hinzufügen</h2>
+    <div class="editing-badge" id="editingBadge" style="display:none;">Eintrag wird bearbeitet</div>
     <form class="entry" id="entryForm">
       <div class="seg" id="typeSeg">
         <button type="button" class="active" data-type="arbeit" onclick="setEntryType('arbeit')">Arbeitszeit</button>
@@ -310,7 +319,10 @@
         <label>Notiz (optional)</label>
         <input type="text" id="fNote" placeholder="z. B. Spätschicht">
       </div>
-      <button type="submit" class="btn" id="submitBtn">Eintrag speichern</button>
+      <div class="form-actions">
+        <button type="submit" class="btn" id="submitBtn">Eintrag speichern</button>
+        <button type="button" class="btn secondary" id="cancelEditBtn" style="display:none;" onclick="cancelEdit()">Abbrechen</button>
+      </div>
     </form>
     <div class="status" id="statusMsg"></div>
   </div>
@@ -332,7 +344,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getFirestore, collection, addDoc, deleteDoc, doc, setDoc,
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc,
   onSnapshot, query, orderBy, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -376,6 +388,8 @@ let periodOffset = 0; // 0 = aktueller Zeitraum, -1 = vorheriger, ...
 let unsubscribe = null;
 let allEntries = []; // aktuell geladene Einträge für den aktiven Job
 let entryType = 'arbeit';
+let editingEntryId = null;
+let editingVacationId = null;
 const currentYear = new Date().getFullYear();
 let vacSettingsUnsub = null;
 let vacEntriesUnsub = null;
@@ -387,6 +401,7 @@ window.switchJob = function(job){
   periodOffset = 0;
   document.getElementById('tab-minijob').classList.toggle('active', job==='minijob');
   document.getElementById('tab-teilzeit').classList.toggle('active', job==='teilzeit');
+  if(editingEntryId || editingVacationId) cancelEdit();
   listenToJob();
   listenToVacation();
 };
@@ -397,9 +412,8 @@ window.shiftPeriod = function(delta){
 };
 
 // ---- Abrechnungszeitraum-Logik ----
-// Minijob: 16. eines Monats bis 15. des Folgemonats.
-// Teilzeit: Kalendermonat (normale Abrechnung), zusätzlich Wochensumme.
-function getMinijobPeriod(offset){
+// Beide Jobs: 16. eines Monats bis 15. des Folgemonats (Fashion Boots UND DSH).
+function getBillingPeriod(offset){
   const today = new Date();
   let year = today.getFullYear();
   let month = today.getMonth(); // 0-indexiert
@@ -408,12 +422,6 @@ function getMinijobPeriod(offset){
   month += offset;
   const start = new Date(year, month, 16);
   const end = new Date(year, month+1, 15);
-  return {start, end};
-}
-function getCalendarMonthPeriod(offset){
-  const today = new Date();
-  const start = new Date(today.getFullYear(), today.getMonth()+offset, 1);
-  const end = new Date(today.getFullYear(), today.getMonth()+offset+1, 0);
   return {start, end};
 }
 function getCurrentWeekRange(){
@@ -558,7 +566,10 @@ function renderVacation(){
         <span class="entry-date">${fmtDate(new Date(e.startDate+'T12:00:00'))}${e.endDate && e.endDate!==e.startDate ? ' – '+fmtDate(new Date(e.endDate+'T12:00:00')) : ''}</span>
         <span class="entry-note">${e.note||''}</span>
         <span class="entry-hours">${fmtDays(Number(e.days))} Tage</span>
-        <button class="btn danger" onclick="removeVacation('${e.id}')">Löschen</button>
+        <span class="entry-actions">
+          <button class="btn edit" onclick="startEditVacation('${e.id}')">Bearbeiten</button>
+          <button class="btn danger" onclick="removeVacation('${e.id}')">Löschen</button>
+        </span>
       </li>
     `).join('');
   }
@@ -592,10 +603,10 @@ function listenToJob(){
 
 function render(){
   const job = JOBS[currentJob];
-  const period = job.type==='minijob' ? getMinijobPeriod(periodOffset) : getCalendarMonthPeriod(periodOffset);
+  const period = getBillingPeriod(periodOffset);
 
   document.getElementById('periodLabel').innerHTML =
-    `${fmtDate(period.start)} – ${fmtDate(period.end)}<small>${job.type==='minijob' ? 'Minijob-Abrechnungszeitraum' : 'Kalendermonat'}</small>`;
+    `${fmtDate(period.start)} – ${fmtDate(period.end)}<small>Abrechnungszeitraum (16.–15.)</small>`;
 
   const inPeriod = allEntries.filter(e => dateInRange(e.date, period.start, period.end));
   const sumHours = inPeriod.reduce((s,e)=> s + Number(e.hours||0), 0);
@@ -615,7 +626,7 @@ function render(){
   }
   dial.setAttribute('stroke-dashoffset', String(circumference * (1-pct)));
   document.getElementById('dialHours').textContent = fmtHours(sumHours);
-  document.getElementById('dialUnit').textContent = job.type==='minijob' ? 'Std. im Zeitraum' : 'Std. im Monat';
+  document.getElementById('dialUnit').textContent = 'Std. im Zeitraum';
 
   const factsEl = document.getElementById('dialFacts');
   if(job.type==='minijob'){
@@ -632,8 +643,8 @@ function render(){
     const weekEntries = allEntries.filter(e => dateInRange(e.date, week.start, week.end));
     const weekHours = weekEntries.reduce((s,e)=> s + Number(e.hours||0), 0);
     factsEl.innerHTML = `
-      <div class="row"><span>Stunden (Monat)</span><span class="v">${fmtHours(sumHours)}</span></div>
-      <div class="row"><span>Verdienst (Monat)</span><span class="v">${fmtEuro(sumEuro)}</span></div>
+      <div class="row"><span>Stunden (Zeitraum)</span><span class="v">${fmtHours(sumHours)}</span></div>
+      <div class="row"><span>Verdienst (Zeitraum)</span><span class="v">${fmtEuro(sumEuro)}</span></div>
       <div class="row"><span>Diese Woche</span><span class="v">${fmtHours(weekHours)} / ${job.weeklyHourTarget}</span></div>
       <div class="row"><span>Stundenlohn</span><span class="v">${fmtEuro(job.wage)}</span></div>
     `;
@@ -649,7 +660,10 @@ function render(){
         <span class="entry-date">${fmtDate(new Date(e.date+'T12:00:00'))}</span>
         <span class="entry-note">${e.start && e.end ? `${e.start}–${e.end} Uhr${e.breakMinutes ? ', ' + e.breakMinutes + ' Min. Pause' : ''}${e.note ? ' · ' + e.note : ''}` : (e.note || '')}</span>
         <span class="entry-hours">${fmtHours(Number(e.hours))} Std.</span>
-        <button class="btn danger" onclick="removeEntry('${e.id}')">Löschen</button>
+        <span class="entry-actions">
+          <button class="btn edit" onclick="startEditEntry('${e.id}')">Bearbeiten</button>
+          <button class="btn danger" onclick="removeEntry('${e.id}')">Löschen</button>
+        </span>
       </li>
     `).join('');
   }
@@ -658,6 +672,65 @@ function render(){
 window.removeEntry = async function(id){
   if(!confirm('Diesen Eintrag wirklich löschen?')) return;
   await deleteDoc(doc(db, 'entries_'+currentJob, id));
+};
+
+window.startEditEntry = function(id){
+  const e = allEntries.find(x => x.id === id);
+  if(!e) return;
+  editingEntryId = id;
+  editingVacationId = null;
+  setEntryType('arbeit');
+  document.getElementById('fDate').value = e.date || '';
+  document.getElementById('fStart').value = e.start || '';
+  document.getElementById('fEnd').value = e.end || '';
+  document.getElementById('fBreak').value = e.breakMinutes || 0;
+  document.getElementById('fNote').value = e.note || '';
+  updateCalcPreview();
+  enterEditMode();
+};
+
+window.startEditVacation = function(id){
+  const e = vacationEntries.find(x => x.id === id);
+  if(!e) return;
+  editingVacationId = id;
+  editingEntryId = null;
+  setEntryType('urlaub');
+  document.getElementById('fVacStart').value = e.startDate || '';
+  document.getElementById('fVacEnd').value = e.endDate || e.startDate || '';
+  document.getElementById('fVacDaysInput').value = e.days || '';
+  document.getElementById('fVacDaysInput').dataset.manual = '1';
+  document.getElementById('fNote').value = e.note || '';
+  updateVacPreview();
+  enterEditMode();
+};
+
+function enterEditMode(){
+  document.getElementById('typeSeg').style.display = 'none';
+  document.getElementById('formHeading').textContent = 'Eintrag bearbeiten';
+  document.getElementById('editingBadge').style.display = '';
+  document.getElementById('cancelEditBtn').style.display = '';
+  document.getElementById('submitBtn').textContent = 'Änderungen speichern';
+  document.getElementById('entryForm').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+window.cancelEdit = function(){
+  editingEntryId = null;
+  editingVacationId = null;
+  document.getElementById('typeSeg').style.display = '';
+  document.getElementById('formHeading').textContent = 'Eintrag hinzufügen';
+  document.getElementById('editingBadge').style.display = 'none';
+  document.getElementById('cancelEditBtn').style.display = 'none';
+  document.getElementById('fNote').value = '';
+  document.getElementById('fBreak').value = 0;
+  document.getElementById('fStart').value = '';
+  document.getElementById('fEnd').value = '';
+  document.getElementById('fDate').valueAsDate = new Date();
+  document.getElementById('fVacDaysInput').dataset.manual = '';
+  document.getElementById('fVacStart').valueAsDate = new Date();
+  document.getElementById('fVacEnd').valueAsDate = new Date();
+  setEntryType('arbeit');
+  updateCalcPreview();
+  updateVacPreview();
 };
 
 document.getElementById('entryForm').addEventListener('submit', async (e) => {
@@ -675,14 +748,21 @@ document.getElementById('entryForm').addEventListener('submit', async (e) => {
       return;
     }
     try{
-      await addDoc(collection(db, 'vacation_'+currentJob), {
-        startDate: start, endDate: end, days, note, createdAt: serverTimestamp()
-      });
-      document.getElementById('fNote').value = '';
-      document.getElementById('fVacDaysInput').dataset.manual = '';
-      document.getElementById('fVacStart').valueAsDate = new Date();
-      document.getElementById('fVacEnd').valueAsDate = new Date();
-      updateVacPreview();
+      if(editingVacationId){
+        await updateDoc(doc(db, 'vacation_'+currentJob, editingVacationId), {
+          startDate: start, endDate: end, days, note
+        });
+        cancelEdit();
+      } else {
+        await addDoc(collection(db, 'vacation_'+currentJob), {
+          startDate: start, endDate: end, days, note, createdAt: serverTimestamp()
+        });
+        document.getElementById('fNote').value = '';
+        document.getElementById('fVacDaysInput').dataset.manual = '';
+        document.getElementById('fVacStart').valueAsDate = new Date();
+        document.getElementById('fVacEnd').valueAsDate = new Date();
+        updateVacPreview();
+      }
       statusMsg.classList.remove('err');
       statusMsg.textContent = 'Gespeichert.';
       setTimeout(()=> statusMsg.textContent='', 2000);
@@ -705,15 +785,22 @@ document.getElementById('entryForm').addEventListener('submit', async (e) => {
     return;
   }
   try{
-    await addDoc(collection(db, 'entries_'+currentJob), {
-      date, start, end, breakMinutes, hours, note, createdAt: serverTimestamp()
-    });
-    document.getElementById('fNote').value = '';
-    document.getElementById('fBreak').value = 0;
-    document.getElementById('fStart').value = '';
-    document.getElementById('fEnd').value = '';
-    document.getElementById('fDate').valueAsDate = new Date();
-    updateCalcPreview();
+    if(editingEntryId){
+      await updateDoc(doc(db, 'entries_'+currentJob, editingEntryId), {
+        date, start, end, breakMinutes, hours, note
+      });
+      cancelEdit();
+    } else {
+      await addDoc(collection(db, 'entries_'+currentJob), {
+        date, start, end, breakMinutes, hours, note, createdAt: serverTimestamp()
+      });
+      document.getElementById('fNote').value = '';
+      document.getElementById('fBreak').value = 0;
+      document.getElementById('fStart').value = '';
+      document.getElementById('fEnd').value = '';
+      document.getElementById('fDate').valueAsDate = new Date();
+      updateCalcPreview();
+    }
     statusMsg.classList.remove('err');
     statusMsg.textContent = 'Gespeichert.';
     setTimeout(()=> statusMsg.textContent='', 2000);
