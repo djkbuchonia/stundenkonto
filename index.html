@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stundenkonto</title>
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-32.png">
+<style>
+  :root{
+    --ink:#111111;
+    --paper:#FAFAF8;
+    --surface:#FFFFFF;
+    --red:#C4192C;
+    --red-dim:#F4DADD;
+    --gray:#6E6E6C;
+    --line:#E6E4E0;
+    --ok:#2E7D46;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding-bottom:40px;
+  }
+  .mono{font-family:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;}
+  header{
+    padding:22px 20px 16px;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    border-bottom:2px solid var(--ink);
+    background:var(--surface);
+  }
+  header svg{width:34px;height:34px;flex-shrink:0;}
+  header h1{
+    font-size:19px;
+    letter-spacing:0.02em;
+    margin:0;
+    font-weight:800;
+  }
+  header .sub{
+    font-size:11px;
+    color:var(--gray);
+    margin-top:2px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+  }
+  .tabs{
+    display:flex;
+    gap:0;
+    margin:18px 16px 0;
+    border:2px solid var(--ink);
+    border-radius:10px;
+    overflow:hidden;
+  }
+  .tab{
+    flex:1;
+    padding:14px 8px;
+    text-align:center;
+    background:var(--surface);
+    cursor:pointer;
+    font-weight:700;
+    font-size:14px;
+    letter-spacing:0.01em;
+    border:none;
+    color:var(--ink);
+    transition:background .15s, color .15s;
+  }
+  .tab + .tab{ border-left:2px solid var(--ink); }
+  .tab.active{ background:var(--ink); color:var(--paper); }
+  .tab .tab-sub{ display:block; font-size:10px; font-weight:500; opacity:.65; margin-top:2px; text-transform:uppercase; letter-spacing:.06em;}
+
+  main{ padding:18px 16px 0; max-width:520px; margin:0 auto; }
+
+  .card{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:18px;
+    margin-bottom:16px;
+  }
+  .card h2{
+    font-size:12px;
+    text-transform:uppercase;
+    letter-spacing:.09em;
+    color:var(--gray);
+    margin:0 0 14px;
+    font-weight:700;
+  }
+
+  /* Dial / Fortschritt */
+  .dial-row{ display:flex; align-items:center; gap:20px; }
+  .dial{ position:relative; width:120px; height:120px; flex-shrink:0; }
+  .dial svg{ width:100%; height:100%; transform:rotate(-90deg); }
+  .dial-center{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+  }
+  .dial-center .num{ font-size:22px; font-weight:800; font-family:'IBM Plex Mono',monospace; }
+  .dial-center .lbl{ font-size:9px; color:var(--gray); text-transform:uppercase; letter-spacing:.06em; margin-top:1px;}
+  .dial-facts{ flex:1; }
+  .dial-facts .row{ display:flex; justify-content:space-between; padding:5px 0; font-size:13.5px; border-bottom:1px solid var(--line); }
+  .dial-facts .row:last-child{ border-bottom:none; }
+  .dial-facts .row .v{ font-family:'IBM Plex Mono',monospace; font-weight:700; }
+  .warn{ color:var(--red); }
+  .okc{ color:var(--ok); }
+
+  .period-nav{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:12px;
+  }
+  .period-nav button{
+    background:none; border:1px solid var(--line); border-radius:8px;
+    width:32px; height:32px; font-size:16px; cursor:pointer; color:var(--ink);
+  }
+  .period-label{ font-size:13px; font-weight:700; text-align:center; }
+  .period-label small{ display:block; font-weight:500; color:var(--gray); font-size:10.5px; margin-top:1px;}
+
+  .seg{ display:flex; border:1.5px solid var(--ink); border-radius:8px; overflow:hidden; margin-bottom:2px; }
+  .seg button{ flex:1; padding:10px; background:var(--surface); border:none; font-size:13px; font-weight:700; cursor:pointer; color:var(--ink); }
+  .seg button + button{ border-left:1.5px solid var(--ink); }
+  .seg button.active{ background:var(--ink); color:var(--paper); }
+
+  .vac-summary{ display:flex; gap:22px; }
+  .vac-num{ font-family:'IBM Plex Mono',monospace; font-weight:800; font-size:28px; line-height:1; }
+  .vac-num.big{ color:var(--red); }
+  .vac-sub{ font-size:9.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--gray); margin-top:5px; }
+  .vac-settings{ display:flex; gap:8px; align-items:flex-end; margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+  .vac-settings > div{ flex:1; }
+  .vac-settings .btn{ padding:11px 14px; font-size:13px; white-space:nowrap; }
+
+  form.entry{ display:flex; flex-direction:column; gap:10px; }
+  .entry .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  label{ font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--gray); font-weight:700; display:block; margin-bottom:4px; }
+  input[type=date], input[type=number], input[type=text]{
+    width:100%; padding:11px 10px; border:1.5px solid var(--line); border-radius:8px;
+    font-size:15px; font-family:'IBM Plex Mono',monospace; background:var(--paper); color:var(--ink);
+  }
+  input[type=text]{ font-family:'Inter',sans-serif; }
+  input:focus{ outline:none; border-color:var(--ink); }
+  input[type=time]{
+    width:100%; padding:11px 10px; border:1.5px solid var(--line); border-radius:8px;
+    font-size:15px; font-family:'IBM Plex Mono',monospace; background:var(--paper); color:var(--ink);
+  }
+  input[type=time]:focus{ outline:none; border-color:var(--ink); }
+  .calc-preview{
+    background:var(--paper); border:1.5px dashed var(--line); border-radius:8px;
+    padding:9px 12px; font-size:13px; color:var(--gray); text-align:center;
+  }
+  .calc-preview span{ font-family:'IBM Plex Mono',monospace; font-weight:800; color:var(--ink); font-size:15px; }
+  .calc-preview.invalid span{ color:var(--red); }
+  .btn{
+    background:var(--ink); color:var(--paper); border:none; border-radius:9px;
+    padding:13px; font-size:14px; font-weight:700; cursor:pointer; letter-spacing:.02em;
+  }
+  .btn:active{ transform:scale(0.99); }
+  .btn.secondary{ background:none; color:var(--ink); border:1.5px solid var(--ink); }
+  .btn.danger{ background:none; color:var(--red); border:1.5px solid var(--red); padding:7px 10px; font-size:12px; }
+
+  ul.entries{ list-style:none; margin:0; padding:0; }
+  ul.entries li{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:11px 0; border-bottom:1px solid var(--line); gap:10px;
+  }
+  ul.entries li:last-child{ border-bottom:none; }
+  .entry-date{ font-family:'IBM Plex Mono',monospace; font-size:13px; font-weight:700; width:78px; flex-shrink:0;}
+  .entry-note{ font-size:12px; color:var(--gray); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .entry-hours{ font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:14px; flex-shrink:0; }
+  .empty{ color:var(--gray); font-size:13px; text-align:center; padding:20px 0; }
+
+  .badge{
+    display:inline-block; font-size:10px; font-weight:700; padding:3px 8px; border-radius:20px;
+    text-transform:uppercase; letter-spacing:.05em; margin-left:6px;
+  }
+  .badge.warn{ background:var(--red-dim); color:var(--red); }
+
+  .status{ font-size:11px; text-align:center; color:var(--gray); padding:10px 0 0; }
+  .status.err{ color:var(--red); }
+
+  footer{ text-align:center; padding:24px 16px 8px; font-size:10.5px; color:var(--gray); }
+</style>
+</head>
+<body>
+
+<header>
+  <svg viewBox="0 0 512 512"><circle cx="256" cy="256" r="248" fill="#111111"/><circle cx="256" cy="256" r="216" fill="#FAFAF8"/><g stroke="#111111" stroke-width="10" stroke-linecap="round"><line x1="256" y1="64" x2="256" y2="98"/><line x1="256" y1="414" x2="256" y2="448"/><line x1="64" y1="256" x2="98" y2="256"/><line x1="414" y1="256" x2="448" y2="256"/></g><line x1="256" y1="256" x2="256" y2="146" stroke="#111111" stroke-width="20" stroke-linecap="round"/><line x1="256" y1="256" x2="360" y2="256" stroke="#C4192C" stroke-width="18" stroke-linecap="round"/><circle cx="256" cy="256" r="22" fill="#111111"/><circle cx="256" cy="256" r="8" fill="#C4192C"/></svg>
+  <div>
+    <h1>Stundenkonto</h1>
+    <div class="sub">Zeiterfassung · zwei Jobs</div>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab active" id="tab-minijob" onclick="switchJob('minijob')">
+    Fashion Boots
+    <span class="tab-sub">Minijob</span>
+  </button>
+  <button class="tab" id="tab-teilzeit" onclick="switchJob('teilzeit')">
+    DSH
+    <span class="tab-sub">Teilzeit</span>
+  </button>
+</div>
+
+<main>
+
+  <div class="card">
+    <div class="period-nav">
+      <button onclick="shiftPeriod(-1)">‹</button>
+      <div class="period-label" id="periodLabel"></div>
+      <button onclick="shiftPeriod(1)">›</button>
+    </div>
+
+    <div class="dial-row">
+      <div class="dial">
+        <svg viewBox="0 0 120 120">
+          <circle cx="60" cy="60" r="52" fill="none" stroke="#E6E4E0" stroke-width="10"/>
+          <circle cx="60" cy="60" r="52" fill="none" stroke="#C4192C" stroke-width="10"
+                  stroke-linecap="round" id="dialProgress"
+                  stroke-dasharray="326.7" stroke-dashoffset="326.7"/>
+        </svg>
+        <div class="dial-center">
+          <div class="num" id="dialHours">0,0</div>
+          <div class="lbl" id="dialUnit">Std.</div>
+        </div>
+      </div>
+      <div class="dial-facts" id="dialFacts"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Urlaub <span id="vacYear"></span></h2>
+    <div class="vac-summary">
+      <div>
+        <div class="vac-num big" id="vacRemaining">–</div>
+        <div class="vac-sub">Resturlaub</div>
+      </div>
+      <div>
+        <div class="vac-num" id="vacTaken">–</div>
+        <div class="vac-sub">Genommen</div>
+      </div>
+      <div>
+        <div class="vac-num" id="vacTotal">–</div>
+        <div class="vac-sub">Jahresanspruch</div>
+      </div>
+    </div>
+    <div class="vac-settings">
+      <div>
+        <label>Jahresurlaub (Tage)</label>
+        <input type="number" id="fVacTotal" step="0.5" min="0" placeholder="z. B. 20">
+      </div>
+      <button type="button" class="btn secondary" onclick="saveVacationTotal()">Speichern</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Eintrag hinzufügen</h2>
+    <form class="entry" id="entryForm">
+      <div class="seg" id="typeSeg">
+        <button type="button" class="active" data-type="arbeit" onclick="setEntryType('arbeit')">Arbeitszeit</button>
+        <button type="button" data-type="urlaub" onclick="setEntryType('urlaub')">Urlaub</button>
+      </div>
+
+      <div id="workFields">
+        <div>
+          <label>Datum</label>
+          <input type="date" id="fDate">
+        </div>
+        <div class="grid2">
+          <div>
+            <label>Anfangszeit</label>
+            <input type="time" id="fStart">
+          </div>
+          <div>
+            <label>Endzeit</label>
+            <input type="time" id="fEnd">
+          </div>
+        </div>
+        <div>
+          <label>Pause (Minuten)</label>
+          <input type="number" id="fBreak" step="5" min="0" max="480" placeholder="z. B. 30" value="0">
+        </div>
+        <div class="calc-preview" id="calcPreview">Ergebnis: <span id="calcResult">0,0</span> Std.</div>
+      </div>
+
+      <div id="vacFields" style="display:none;">
+        <div class="grid2">
+          <div>
+            <label>Von</label>
+            <input type="date" id="fVacStart">
+          </div>
+          <div>
+            <label>Bis</label>
+            <input type="date" id="fVacEnd">
+          </div>
+        </div>
+        <div>
+          <label>Urlaubstage</label>
+          <input type="number" id="fVacDaysInput" step="0.5" min="0.5" placeholder="z. B. 1">
+        </div>
+        <div class="calc-preview" id="vacCalcPreview">Werktage im Zeitraum: <span id="vacCalcResult">0</span></div>
+      </div>
+
+      <div>
+        <label>Notiz (optional)</label>
+        <input type="text" id="fNote" placeholder="z. B. Spätschicht">
+      </div>
+      <button type="submit" class="btn" id="submitBtn">Eintrag speichern</button>
+    </form>
+    <div class="status" id="statusMsg"></div>
+  </div>
+
+  <div class="card">
+    <h2>Einträge im Zeitraum</h2>
+    <ul class="entries" id="entriesList"></ul>
+  </div>
+
+  <div class="card">
+    <h2>Urlaub im Jahr</h2>
+    <ul class="entries" id="vacationList"></ul>
+  </div>
+
+</main>
+
+<footer>Fashion Boots &amp; DSH · lokal synchronisiert über Firebase</footer>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {
+  getFirestore, collection, addDoc, deleteDoc, doc, setDoc,
+  onSnapshot, query, orderBy, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+// ====== FIREBASE-KONFIGURATION ======
+// Bitte mit deinen eigenen Firebase-Projektdaten ersetzen (siehe Anleitung im Chat).
+const firebaseConfig = {
+  apiKey: "AIzaSyBGggQn4dG9iWlP_ro8fiEMl7bc99Sv_BU",
+  authDomain: "zeiterfassung-6e737.firebaseapp.com",
+  projectId: "zeiterfassung-6e737",
+  storageBucket: "zeiterfassung-6e737.firebasestorage.app",
+  messagingSenderId: "191480337564",
+  appId: "1:191480337564:web:5e0b503341d481a2514959"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// ====== JOB-KONFIGURATION ======
+const JOBS = {
+  minijob: {
+    label: "Fashion Boots",
+    company: "Boots & Fashion GROUP GmbH",
+    type: "minijob",
+    wage: 13.90,
+    monthlyHourCap: 43,
+    monthlyEuroCap: 603,
+    unit: "Std."
+  },
+  teilzeit: {
+    label: "DSH",
+    company: "Dr. Schmitt Handelsgesellschaft GmbH & Co. KG",
+    type: "teilzeit",
+    wage: 14,
+    weeklyHourTarget: 16,
+    unit: "Std."
+  }
+};
+
+let currentJob = "minijob";
+let periodOffset = 0; // 0 = aktueller Zeitraum, -1 = vorheriger, ...
+let unsubscribe = null;
+let allEntries = []; // aktuell geladene Einträge für den aktiven Job
+let entryType = 'arbeit';
+const currentYear = new Date().getFullYear();
+let vacSettingsUnsub = null;
+let vacEntriesUnsub = null;
+let vacationDaysTotal = 0;
+let vacationEntries = [];
+
+window.switchJob = function(job){
+  currentJob = job;
+  periodOffset = 0;
+  document.getElementById('tab-minijob').classList.toggle('active', job==='minijob');
+  document.getElementById('tab-teilzeit').classList.toggle('active', job==='teilzeit');
+  listenToJob();
+  listenToVacation();
+};
+
+window.shiftPeriod = function(delta){
+  periodOffset += delta;
+  render();
+};
+
+// ---- Abrechnungszeitraum-Logik ----
+// Minijob: 16. eines Monats bis 15. des Folgemonats.
+// Teilzeit: Kalendermonat (normale Abrechnung), zusätzlich Wochensumme.
+function getMinijobPeriod(offset){
+  const today = new Date();
+  let year = today.getFullYear();
+  let month = today.getMonth(); // 0-indexiert
+  // Wenn wir vor dem 16. sind, gehört "heute" noch zum Zeitraum, der im Vormonat begann
+  if(today.getDate() < 16){ month -= 1; }
+  month += offset;
+  const start = new Date(year, month, 16);
+  const end = new Date(year, month+1, 15);
+  return {start, end};
+}
+function getCalendarMonthPeriod(offset){
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth()+offset, 1);
+  const end = new Date(today.getFullYear(), today.getMonth()+offset+1, 0);
+  return {start, end};
+}
+function getCurrentWeekRange(){
+  const today = new Date();
+  const day = (today.getDay()+6)%7; // Montag=0
+  const start = new Date(today); start.setDate(today.getDate()-day);
+  const end = new Date(start); end.setDate(start.getDate()+6);
+  return {start, end};
+}
+
+function fmtDate(d){
+  return d.toLocaleDateString('de-DE', {day:'2-digit', month:'2-digit', year:'numeric'});
+}
+function fmtEuro(n){
+  return n.toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €';
+}
+function fmtHours(n){
+  return n.toLocaleString('de-DE', {minimumFractionDigits:1, maximumFractionDigits:2});
+}
+function dateInRange(dateStr, start, end){
+  const d = new Date(dateStr+'T12:00:00');
+  return d >= start && d <= end;
+}
+
+// Berechnet Arbeitsstunden aus Anfangszeit, Endzeit (HH:MM) und Pause in Minuten.
+// Geht über Mitternacht, falls Endzeit vor Anfangszeit liegt (z. B. Nachtschicht).
+function calcHours(startStr, endStr, breakMinutes){
+  if(!startStr || !endStr) return null;
+  const [sh, sm] = startStr.split(':').map(Number);
+  const [eh, em] = endStr.split(':').map(Number);
+  let startMin = sh*60 + sm;
+  let endMin = eh*60 + em;
+  if(endMin <= startMin) endMin += 24*60; // über Mitternacht
+  const workedMin = (endMin - startMin) - Number(breakMinutes||0);
+  if(workedMin < 0) return null;
+  return workedMin / 60;
+}
+
+function updateCalcPreview(){
+  const start = document.getElementById('fStart').value;
+  const end = document.getElementById('fEnd').value;
+  const brk = document.getElementById('fBreak').value;
+  const preview = document.getElementById('calcPreview');
+  const result = document.getElementById('calcResult');
+  const hours = calcHours(start, end, brk);
+  if(hours === null){
+    result.textContent = start && end ? 'ungültig' : '0,0';
+    preview.classList.toggle('invalid', !!(start && end));
+  } else {
+    result.textContent = fmtHours(hours);
+    preview.classList.remove('invalid');
+  }
+}
+['fStart','fEnd','fBreak'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updateCalcPreview);
+});
+
+// ====== URLAUB ======
+
+window.setEntryType = function(type){
+  entryType = type;
+  document.querySelectorAll('#typeSeg button').forEach(b => b.classList.toggle('active', b.dataset.type===type));
+  document.getElementById('workFields').style.display = type==='arbeit' ? '' : 'none';
+  document.getElementById('vacFields').style.display = type==='urlaub' ? '' : 'none';
+  document.getElementById('submitBtn').textContent = type==='urlaub' ? 'Urlaub eintragen' : 'Eintrag speichern';
+};
+
+// Zählt Werktage (Mo–Fr) inklusive Start- und Enddatum.
+function countWeekdays(startStr, endStr){
+  if(!startStr) return 0;
+  const end = endStr || startStr;
+  const s = new Date(startStr+'T12:00:00');
+  const e = new Date(end+'T12:00:00');
+  if(e < s) return 0;
+  let count = 0;
+  const cur = new Date(s);
+  while(cur <= e){
+    const day = cur.getDay();
+    if(day !== 0 && day !== 6) count++;
+    cur.setDate(cur.getDate()+1);
+  }
+  return count;
+}
+function fmtDays(n){
+  return n.toLocaleString('de-DE', {minimumFractionDigits:0, maximumFractionDigits:1});
+}
+
+function updateVacPreview(){
+  const start = document.getElementById('fVacStart').value;
+  const end = document.getElementById('fVacEnd').value;
+  const days = countWeekdays(start, end);
+  document.getElementById('vacCalcResult').textContent = days;
+  const daysInput = document.getElementById('fVacDaysInput');
+  if(!daysInput.dataset.manual){
+    daysInput.value = days || '';
+  }
+}
+document.getElementById('fVacStart').addEventListener('input', () => {
+  if(!document.getElementById('fVacEnd').value){
+    document.getElementById('fVacEnd').value = document.getElementById('fVacStart').value;
+  }
+  updateVacPreview();
+});
+document.getElementById('fVacEnd').addEventListener('input', updateVacPreview);
+document.getElementById('fVacDaysInput').addEventListener('input', (e) => { e.target.dataset.manual = '1'; });
+
+function listenToVacation(){
+  if(vacSettingsUnsub) vacSettingsUnsub();
+  if(vacEntriesUnsub) vacEntriesUnsub();
+  document.getElementById('vacYear').textContent = currentYear;
+
+  const settingsRef = doc(db, 'vacation_settings', currentJob+'_'+currentYear);
+  vacSettingsUnsub = onSnapshot(settingsRef, snap => {
+    vacationDaysTotal = snap.exists() ? Number(snap.data().days||0) : 0;
+    document.getElementById('fVacTotal').value = vacationDaysTotal || '';
+    renderVacation();
+  });
+
+  const q = query(collection(db, 'vacation_'+currentJob), orderBy('startDate','desc'));
+  vacEntriesUnsub = onSnapshot(q, snap => {
+    vacationEntries = [];
+    snap.forEach(d => vacationEntries.push({id:d.id, ...d.data()}));
+    renderVacation();
+  });
+}
+
+function renderVacation(){
+  const yearEntries = vacationEntries.filter(e => e.startDate && e.startDate.slice(0,4)===String(currentYear));
+  const taken = yearEntries.reduce((s,e)=> s + Number(e.days||0), 0);
+  const remaining = vacationDaysTotal - taken;
+
+  document.getElementById('vacRemaining').textContent = fmtDays(remaining);
+  document.getElementById('vacTaken').textContent = fmtDays(taken);
+  document.getElementById('vacTotal').textContent = fmtDays(vacationDaysTotal);
+
+  const list = document.getElementById('vacationList');
+  if(yearEntries.length===0){
+    list.innerHTML = '<li class="empty">Noch kein Urlaub eingetragen.</li>';
+  } else {
+    list.innerHTML = yearEntries.map(e => `
+      <li>
+        <span class="entry-date">${fmtDate(new Date(e.startDate+'T12:00:00'))}${e.endDate && e.endDate!==e.startDate ? ' – '+fmtDate(new Date(e.endDate+'T12:00:00')) : ''}</span>
+        <span class="entry-note">${e.note||''}</span>
+        <span class="entry-hours">${fmtDays(Number(e.days))} Tage</span>
+        <button class="btn danger" onclick="removeVacation('${e.id}')">Löschen</button>
+      </li>
+    `).join('');
+  }
+}
+
+window.removeVacation = async function(id){
+  if(!confirm('Diesen Urlaubseintrag wirklich löschen?')) return;
+  await deleteDoc(doc(db, 'vacation_'+currentJob, id));
+};
+
+window.saveVacationTotal = async function(){
+  const val = parseFloat(document.getElementById('fVacTotal').value);
+  if(isNaN(val) || val<0) return;
+  await setDoc(doc(db, 'vacation_settings', currentJob+'_'+currentYear), {days: val});
+};
+
+function listenToJob(){
+  if(unsubscribe) unsubscribe();
+  const q = query(collection(db, 'entries_'+currentJob), orderBy('date','desc'));
+  unsubscribe = onSnapshot(q, snap => {
+    allEntries = [];
+    snap.forEach(docSnap => {
+      allEntries.push({id: docSnap.id, ...docSnap.data()});
+    });
+    render();
+  }, err => {
+    document.getElementById('statusMsg').textContent = 'Verbindung zu Firebase fehlgeschlagen — Konfiguration prüfen.';
+    document.getElementById('statusMsg').classList.add('err');
+  });
+}
+
+function render(){
+  const job = JOBS[currentJob];
+  const period = job.type==='minijob' ? getMinijobPeriod(periodOffset) : getCalendarMonthPeriod(periodOffset);
+
+  document.getElementById('periodLabel').innerHTML =
+    `${fmtDate(period.start)} – ${fmtDate(period.end)}<small>${job.type==='minijob' ? 'Minijob-Abrechnungszeitraum' : 'Kalendermonat'}</small>`;
+
+  const inPeriod = allEntries.filter(e => dateInRange(e.date, period.start, period.end));
+  const sumHours = inPeriod.reduce((s,e)=> s + Number(e.hours||0), 0);
+  const sumEuro = sumHours * job.wage;
+
+  // Dial
+  const dial = document.getElementById('dialProgress');
+  const circumference = 326.7;
+  let pct = 0;
+  if(job.type==='minijob'){
+    pct = Math.min(sumHours / job.monthlyHourCap, 1);
+  } else {
+    const week = getCurrentWeekRange();
+    const weekEntries = allEntries.filter(e => dateInRange(e.date, week.start, week.end));
+    const weekHours = weekEntries.reduce((s,e)=> s + Number(e.hours||0), 0);
+    pct = Math.min(weekHours / job.weeklyHourTarget, 1);
+  }
+  dial.setAttribute('stroke-dashoffset', String(circumference * (1-pct)));
+  document.getElementById('dialHours').textContent = fmtHours(sumHours);
+  document.getElementById('dialUnit').textContent = job.type==='minijob' ? 'Std. im Zeitraum' : 'Std. im Monat';
+
+  const factsEl = document.getElementById('dialFacts');
+  if(job.type==='minijob'){
+    const hoursWarn = sumHours > job.monthlyHourCap;
+    const euroWarn = sumEuro > job.monthlyEuroCap;
+    factsEl.innerHTML = `
+      <div class="row"><span>Stunden</span><span class="v ${hoursWarn?'warn':''}">${fmtHours(sumHours)} / ${job.monthlyHourCap}</span></div>
+      <div class="row"><span>Verdienst</span><span class="v ${euroWarn?'warn':''}">${fmtEuro(sumEuro)} / ${fmtEuro(job.monthlyEuroCap)}</span></div>
+      <div class="row"><span>Stundenlohn</span><span class="v">${fmtEuro(job.wage)}</span></div>
+      ${(hoursWarn||euroWarn) ? '<div class="row"><span class="badge warn">Grenze überschritten</span></div>' : ''}
+    `;
+  } else {
+    const week = getCurrentWeekRange();
+    const weekEntries = allEntries.filter(e => dateInRange(e.date, week.start, week.end));
+    const weekHours = weekEntries.reduce((s,e)=> s + Number(e.hours||0), 0);
+    factsEl.innerHTML = `
+      <div class="row"><span>Stunden (Monat)</span><span class="v">${fmtHours(sumHours)}</span></div>
+      <div class="row"><span>Verdienst (Monat)</span><span class="v">${fmtEuro(sumEuro)}</span></div>
+      <div class="row"><span>Diese Woche</span><span class="v">${fmtHours(weekHours)} / ${job.weeklyHourTarget}</span></div>
+      <div class="row"><span>Stundenlohn</span><span class="v">${fmtEuro(job.wage)}</span></div>
+    `;
+  }
+
+  // Liste
+  const list = document.getElementById('entriesList');
+  if(inPeriod.length===0){
+    list.innerHTML = '<li class="empty">Noch keine Einträge in diesem Zeitraum.</li>';
+  } else {
+    list.innerHTML = inPeriod.map(e => `
+      <li>
+        <span class="entry-date">${fmtDate(new Date(e.date+'T12:00:00'))}</span>
+        <span class="entry-note">${e.start && e.end ? `${e.start}–${e.end} Uhr${e.breakMinutes ? ', ' + e.breakMinutes + ' Min. Pause' : ''}${e.note ? ' · ' + e.note : ''}` : (e.note || '')}</span>
+        <span class="entry-hours">${fmtHours(Number(e.hours))} Std.</span>
+        <button class="btn danger" onclick="removeEntry('${e.id}')">Löschen</button>
+      </li>
+    `).join('');
+  }
+}
+
+window.removeEntry = async function(id){
+  if(!confirm('Diesen Eintrag wirklich löschen?')) return;
+  await deleteDoc(doc(db, 'entries_'+currentJob, id));
+};
+
+document.getElementById('entryForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const statusMsg = document.getElementById('statusMsg');
+
+  if(entryType === 'urlaub'){
+    const start = document.getElementById('fVacStart').value;
+    const end = document.getElementById('fVacEnd').value || start;
+    const days = parseFloat(document.getElementById('fVacDaysInput').value);
+    const note = document.getElementById('fNote').value.trim();
+    if(!start || isNaN(days) || days<=0){
+      statusMsg.textContent = 'Bitte Zeitraum und Urlaubstage angeben.';
+      statusMsg.classList.add('err');
+      return;
+    }
+    try{
+      await addDoc(collection(db, 'vacation_'+currentJob), {
+        startDate: start, endDate: end, days, note, createdAt: serverTimestamp()
+      });
+      document.getElementById('fNote').value = '';
+      document.getElementById('fVacDaysInput').dataset.manual = '';
+      document.getElementById('fVacStart').valueAsDate = new Date();
+      document.getElementById('fVacEnd').valueAsDate = new Date();
+      updateVacPreview();
+      statusMsg.classList.remove('err');
+      statusMsg.textContent = 'Gespeichert.';
+      setTimeout(()=> statusMsg.textContent='', 2000);
+    } catch(err){
+      statusMsg.classList.add('err');
+      statusMsg.textContent = 'Fehler beim Speichern — Firebase-Konfiguration prüfen.';
+    }
+    return;
+  }
+
+  const date = document.getElementById('fDate').value;
+  const start = document.getElementById('fStart').value;
+  const end = document.getElementById('fEnd').value;
+  const breakMinutes = parseInt(document.getElementById('fBreak').value || '0', 10);
+  const note = document.getElementById('fNote').value.trim();
+  const hours = calcHours(start, end, breakMinutes);
+  if(!date || hours === null || hours<=0){
+    statusMsg.textContent = 'Bitte gültige Zeiten angeben (Endzeit nach Anfangszeit plus Pause).';
+    statusMsg.classList.add('err');
+    return;
+  }
+  try{
+    await addDoc(collection(db, 'entries_'+currentJob), {
+      date, start, end, breakMinutes, hours, note, createdAt: serverTimestamp()
+    });
+    document.getElementById('fNote').value = '';
+    document.getElementById('fBreak').value = 0;
+    document.getElementById('fStart').value = '';
+    document.getElementById('fEnd').value = '';
+    document.getElementById('fDate').valueAsDate = new Date();
+    updateCalcPreview();
+    statusMsg.classList.remove('err');
+    statusMsg.textContent = 'Gespeichert.';
+    setTimeout(()=> statusMsg.textContent='', 2000);
+  } catch(err){
+    statusMsg.classList.add('err');
+    statusMsg.textContent = 'Fehler beim Speichern — Firebase-Konfiguration prüfen.';
+  }
+});
+
+// Startwerte vorbelegen
+document.getElementById('fDate').valueAsDate = new Date();
+document.getElementById('fVacStart').valueAsDate = new Date();
+document.getElementById('fVacEnd').valueAsDate = new Date();
+updateCalcPreview();
+updateVacPreview();
+
+listenToJob();
+listenToVacation();
+
+// Service Worker für PWA-Funktion
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  });
+}
+</script>
+</body>
+</html>
