@@ -208,6 +208,33 @@
   .status{ font-size:11px; text-align:center; color:var(--gray); padding:10px 0 0; }
   .status.err{ color:var(--red); }
 
+  .print-btn{ width:100%; margin-top:16px; }
+
+  /* ====== Druckbericht ====== */
+  #printReport{ display:none; }
+  @media print{
+    body *{ visibility:hidden; }
+    #printReport, #printReport *{ visibility:visible; }
+    #printReport{
+      display:block; position:absolute; top:0; left:0; width:100%;
+      padding:20px; font-family:'Inter',sans-serif; color:#111;
+    }
+    .no-print{ display:none !important; }
+  }
+  .pr-header{ display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #111; padding-bottom:10px; margin-bottom:16px; }
+  .pr-header h1{ font-size:20px; margin:0 0 4px; }
+  .pr-header .pr-sub{ font-size:12px; color:#555; }
+  .pr-header .pr-period{ text-align:right; font-family:'IBM Plex Mono',monospace; font-size:13px; font-weight:700; }
+  .pr-summary{ display:flex; gap:24px; margin:14px 0 18px; padding:12px 0; border-top:1px solid #ccc; border-bottom:1px solid #ccc; }
+  .pr-summary div{ font-size:12px; }
+  .pr-summary .v{ font-family:'IBM Plex Mono',monospace; font-weight:800; font-size:16px; display:block; }
+  .pr-table{ width:100%; border-collapse:collapse; font-size:12.5px; margin-bottom:20px; }
+  .pr-table th, .pr-table td{ border-bottom:1px solid #ddd; padding:6px 4px; text-align:left; }
+  .pr-table th{ font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:#555; }
+  .pr-table td.num, .pr-table th.num{ text-align:right; font-family:'IBM Plex Mono',monospace; }
+  .pr-table tfoot td{ font-weight:800; border-top:2px solid #111; border-bottom:none; }
+  .pr-section-title{ font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; margin:18px 0 8px; }
+  .pr-footer{ font-size:10.5px; color:#777; margin-top:24px; }
   footer{ text-align:center; padding:24px 16px 8px; font-size:10.5px; color:var(--gray); }
 </style>
 </head>
@@ -256,6 +283,7 @@
       </div>
       <div class="dial-facts" id="dialFacts"></div>
     </div>
+    <button type="button" class="btn secondary print-btn" onclick="printReport()">🖨️ Bericht für diesen Zeitraum drucken</button>
   </div>
 
   <div class="card">
@@ -357,6 +385,8 @@
 </main>
 
 <footer>Fashion Boots &amp; DSH · lokal synchronisiert über Firebase</footer>
+
+<div id="printReport"></div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -694,6 +724,98 @@ function listenToJob(){
     document.getElementById('statusMsg').classList.add('err');
   });
 }
+
+// ====== DRUCKBERICHT ======
+window.printReport = function(){
+  const job = JOBS[currentJob];
+  const period = getBillingPeriod(periodOffset);
+
+  const workItems = allEntries
+    .filter(e => dateInRange(e.date, period.start, period.end))
+    .slice()
+    .sort((a,b) => a.date.localeCompare(b.date));
+  const workHours = workItems.reduce((s,e)=> s + Number(e.hours||0), 0);
+  const workEuro = workHours * job.wage;
+
+  const vacHoursPerDay = job.type==='minijob' ? 5 : 8;
+  const vacItems = vacationEntries
+    .map(e => ({...e, daysInPeriod: vacationWeekdaysInPeriod(e, period.start, period.end)}))
+    .filter(e => e.daysInPeriod > 0)
+    .sort((a,b) => a.startDate.localeCompare(b.startDate));
+  const vacDays = vacItems.reduce((s,e)=> s + e.daysInPeriod, 0);
+  const vacHours = vacDays * vacHoursPerDay;
+  const vacEuro = vacHours * job.wage;
+
+  const totalHours = workHours + vacHours;
+  const totalEuro = workEuro + vacEuro;
+
+  const workRows = workItems.length === 0
+    ? `<tr><td colspan="4" style="color:#777;">Keine Arbeitszeit-Buchungen in diesem Zeitraum.</td></tr>`
+    : workItems.map(e => `
+      <tr>
+        <td>${fmtDate(new Date(e.date+'T12:00:00'))}</td>
+        <td>${e.start && e.end ? `${e.start}–${e.end} Uhr` : '–'}</td>
+        <td>${e.breakMinutes ? e.breakMinutes+' Min.' : '–'}</td>
+        <td class="num">${fmtHours(Number(e.hours))}</td>
+      </tr>
+    `).join('');
+
+  const vacRows = vacItems.length === 0
+    ? ''
+    : `
+      <div class="pr-section-title">Urlaub im Zeitraum</div>
+      <table class="pr-table">
+        <thead><tr><th>Von</th><th>Bis</th><th>Notiz</th><th class="num">Tage</th></tr></thead>
+        <tbody>
+          ${vacItems.map(e => `
+            <tr>
+              <td>${fmtDate(new Date(e.startDate+'T12:00:00'))}</td>
+              <td>${fmtDate(new Date((e.endDate||e.startDate)+'T12:00:00'))}</td>
+              <td>${e.note||''}</td>
+              <td class="num">${fmtDays(e.daysInPeriod)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+
+  const capRow = job.type==='minijob'
+    ? `<div><span class="v">${fmtHours(totalHours)} / ${job.monthlyHourCap}</span>Stunden (Grenze)</div>
+       <div><span class="v">${fmtEuro(totalEuro)} / ${fmtEuro(job.monthlyEuroCap)}</span>Verdienst (Grenze)</div>`
+    : `<div><span class="v">${fmtHours(totalHours)}</span>Stunden gesamt</div>
+       <div><span class="v">${fmtEuro(totalEuro)}</span>Verdienst gesamt</div>`;
+
+  document.getElementById('printReport').innerHTML = `
+    <div class="pr-header">
+      <div>
+        <h1>Stundenkonto — ${job.label}</h1>
+        <div class="pr-sub">${job.company} · ${job.type==='minijob' ? 'Minijob' : 'Teilzeit'} · ${fmtEuro(job.wage)}/Std.</div>
+      </div>
+      <div class="pr-period">
+        Abrechnungszeitraum<br>${fmtDate(period.start)} – ${fmtDate(period.end)}
+      </div>
+    </div>
+
+    <div class="pr-summary">
+      ${capRow}
+      <div><span class="v">${fmtHours(workHours)}</span>davon Arbeit</div>
+      <div><span class="v">${fmtHours(vacHours)} (${fmtDays(vacDays)} Tage)</span>davon Urlaub</div>
+    </div>
+
+    <div class="pr-section-title">Arbeitszeiten</div>
+    <table class="pr-table">
+      <thead><tr><th>Datum</th><th>Zeit</th><th>Pause</th><th class="num">Stunden</th></tr></thead>
+      <tbody>${workRows}</tbody>
+      <tfoot><tr><td colspan="3">Summe Arbeitszeit</td><td class="num">${fmtHours(workHours)}</td></tr></tfoot>
+    </table>
+
+    ${vacRows}
+
+    <div class="pr-footer">Erstellt am ${fmtDate(new Date())} · Fashion Boots &amp; DSH Stundenkonto</div>
+  `;
+
+  window.print();
+};
 
 function render(){
   const job = JOBS[currentJob];
