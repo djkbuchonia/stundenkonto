@@ -182,6 +182,23 @@
   .entry-hours{ font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:14px; flex-shrink:0; }
   .empty{ color:var(--gray); font-size:13px; text-align:center; padding:20px 0; }
 
+  .accordion-item{ border-bottom:1px solid var(--line); }
+  .accordion-item:last-child{ border-bottom:none; }
+  .accordion-head{
+    width:100%; background:none; border:none; cursor:pointer;
+    display:flex; align-items:center; gap:10px; padding:12px 0; text-align:left;
+  }
+  .accordion-chevron{
+    font-size:16px; font-weight:700; color:var(--gray); flex-shrink:0;
+    transition:transform .15s; display:inline-block;
+  }
+  .accordion-chevron.open{ transform:rotate(90deg); color:var(--ink); }
+  .accordion-title{ font-size:13.5px; font-weight:700; flex:1; }
+  .accordion-meta{ font-size:11.5px; color:var(--gray); font-family:'IBM Plex Mono',monospace; flex-shrink:0; }
+  .accordion-body{ list-style:none; margin:0; padding:0; max-height:0; overflow:hidden; }
+  .accordion-body.open{ max-height:none; padding-bottom:6px; }
+  .accordion-body li{ padding-left:2px; padding-right:2px; }
+
   .badge{
     display:inline-block; font-size:10px; font-weight:700; padding:3px 8px; border-radius:20px;
     text-transform:uppercase; letter-spacing:.05em; margin-left:6px;
@@ -329,12 +346,12 @@
 
   <div class="card">
     <h2>Einträge im Zeitraum</h2>
-    <ul class="entries" id="entriesList"></ul>
+    <div class="entries" id="entriesList"></div>
   </div>
 
   <div class="card">
     <h2>Urlaub im Jahr</h2>
-    <ul class="entries" id="vacationList"></ul>
+    <div class="entries" id="vacationList"></div>
   </div>
 
 </main>
@@ -395,6 +412,8 @@ let vacSettingsUnsub = null;
 let vacEntriesUnsub = null;
 let vacationDaysTotal = 0;
 let vacationEntries = [];
+let expandedWorkPeriods = new Set([periodKey(getBillingPeriod(0).start)]);
+let expandedVacationPeriods = new Set([periodKey(getBillingPeriod(0).start)]);
 
 window.switchJob = function(job){
   currentJob = job;
@@ -402,12 +421,18 @@ window.switchJob = function(job){
   document.getElementById('tab-minijob').classList.toggle('active', job==='minijob');
   document.getElementById('tab-teilzeit').classList.toggle('active', job==='teilzeit');
   if(editingEntryId || editingVacationId) cancelEdit();
+  const key = periodKey(getBillingPeriod(0).start);
+  expandedWorkPeriods = new Set([key]);
+  expandedVacationPeriods = new Set([key]);
   listenToJob();
   listenToVacation();
 };
 
 window.shiftPeriod = function(delta){
   periodOffset += delta;
+  const key = periodKey(getBillingPeriod(periodOffset).start);
+  expandedWorkPeriods.add(key);
+  expandedVacationPeriods.add(key);
   render();
 };
 
@@ -430,6 +455,33 @@ function getCurrentWeekRange(){
   const start = new Date(today); start.setDate(today.getDate()-day);
   const end = new Date(start); end.setDate(start.getDate()+6);
   return {start, end};
+}
+
+function pad2(n){ return String(n).padStart(2,'0'); }
+function toISO(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+
+// Ermittelt den Abrechnungszeitraum (16.–15.), zu dem ein Datum gehört.
+function getPeriodForDate(dateStr){
+  const d = new Date(dateStr+'T12:00:00');
+  let year = d.getFullYear();
+  let month = d.getMonth();
+  if(d.getDate() < 16){ month -= 1; }
+  const start = new Date(year, month, 16);
+  const end = new Date(year, month+1, 15);
+  return {start, end};
+}
+// Eindeutiger Schlüssel für einen Zeitraum, z. B. "2026-07-16".
+function periodKey(start){
+  return `${start.getFullYear()}-${pad2(start.getMonth()+1)}-16`;
+}
+// Wie viele Werktage eines Urlaubseintrags in einen bestimmten Zeitraum fallen (für Überschneidungen an der Zeitraumgrenze).
+function vacationWeekdaysInPeriod(entry, periodStart, periodEnd){
+  const entryStart = new Date(entry.startDate+'T12:00:00');
+  const entryEnd = new Date((entry.endDate||entry.startDate)+'T12:00:00');
+  const s = entryStart > periodStart ? entryStart : periodStart;
+  const e = entryEnd < periodEnd ? entryEnd : periodEnd;
+  if(s > e) return 0;
+  return countWeekdays(toISO(s), toISO(e));
 }
 
 function fmtDate(d){
@@ -545,6 +597,7 @@ function listenToVacation(){
     vacationEntries = [];
     snap.forEach(d => vacationEntries.push({id:d.id, ...d.data()}));
     renderVacation();
+    render();
   });
 }
 
@@ -557,23 +610,64 @@ function renderVacation(){
   document.getElementById('vacTaken').textContent = fmtDays(taken);
   document.getElementById('vacTotal').textContent = fmtDays(vacationDaysTotal);
 
-  const list = document.getElementById('vacationList');
-  if(yearEntries.length===0){
-    list.innerHTML = '<li class="empty">Noch kein Urlaub eingetragen.</li>';
-  } else {
-    list.innerHTML = yearEntries.map(e => `
-      <li>
-        <span class="entry-date">${fmtDate(new Date(e.startDate+'T12:00:00'))}${e.endDate && e.endDate!==e.startDate ? ' – '+fmtDate(new Date(e.endDate+'T12:00:00')) : ''}</span>
-        <span class="entry-note">${e.note||''}</span>
-        <span class="entry-hours">${fmtDays(Number(e.days))} Tage</span>
-        <span class="entry-actions">
-          <button class="btn edit" onclick="startEditVacation('${e.id}')">Bearbeiten</button>
-          <button class="btn danger" onclick="removeVacation('${e.id}')">Löschen</button>
-        </span>
-      </li>
-    `).join('');
-  }
+  renderVacationAccordion(yearEntries);
 }
+
+function renderVacationAccordion(yearEntries){
+  const groups = new Map();
+  yearEntries.forEach(e => {
+    const p = getPeriodForDate(e.startDate);
+    const key = periodKey(p.start);
+    if(!groups.has(key)) groups.set(key, {start:p.start, end:p.end, items:[]});
+    groups.get(key).items.push(e);
+  });
+  const curPeriod = getBillingPeriod(periodOffset);
+  const curKey = periodKey(curPeriod.start);
+  if(String(curPeriod.start.getFullYear())===String(currentYear) && !groups.has(curKey)){
+    groups.set(curKey, {start:curPeriod.start, end:curPeriod.end, items:[]});
+  }
+
+  const sortedKeys = [...groups.keys()].sort().reverse();
+  const list = document.getElementById('vacationList');
+  if(sortedKeys.length===0){
+    list.innerHTML = '<div class="empty">Noch kein Urlaub eingetragen.</div>';
+    return;
+  }
+  list.innerHTML = sortedKeys.map(key => {
+    const g = groups.get(key);
+    const isOpen = expandedVacationPeriods.has(key);
+    const days = g.items.reduce((s,e)=> s + Number(e.days||0), 0);
+    const body = g.items.length === 0
+      ? '<li class="empty">Kein Urlaub in diesem Zeitraum.</li>'
+      : g.items.map(e => `
+        <li>
+          <span class="entry-date">${fmtDate(new Date(e.startDate+'T12:00:00'))}${e.endDate && e.endDate!==e.startDate ? ' – '+fmtDate(new Date(e.endDate+'T12:00:00')) : ''}</span>
+          <span class="entry-note">${e.note||''}</span>
+          <span class="entry-hours">${fmtDays(Number(e.days))} Tage</span>
+          <span class="entry-actions">
+            <button class="btn edit" onclick="startEditVacation('${e.id}')">Bearbeiten</button>
+            <button class="btn danger" onclick="removeVacation('${e.id}')">Löschen</button>
+          </span>
+        </li>
+      `).join('');
+    return `
+      <div class="accordion-item">
+        <button type="button" class="accordion-head" onclick="toggleVacationPeriod('${key}')">
+          <span class="accordion-chevron ${isOpen?'open':''}">›</span>
+          <span class="accordion-title">${fmtDate(g.start)} – ${fmtDate(g.end)}</span>
+          <span class="accordion-meta">${g.items.length ? fmtDays(days)+' Tage' : 'keine Einträge'}</span>
+        </button>
+        <ul class="entries accordion-body ${isOpen?'open':''}">${body}</ul>
+      </div>
+    `;
+  }).join('');
+}
+
+window.toggleVacationPeriod = function(key){
+  if(expandedVacationPeriods.has(key)) expandedVacationPeriods.delete(key);
+  else expandedVacationPeriods.add(key);
+  renderVacation();
+};
 
 window.removeVacation = async function(id){
   if(!confirm('Diesen Urlaubseintrag wirklich löschen?')) return;
@@ -609,7 +703,13 @@ function render(){
     `${fmtDate(period.start)} – ${fmtDate(period.end)}<small>Abrechnungszeitraum (16.–15.)</small>`;
 
   const inPeriod = allEntries.filter(e => dateInRange(e.date, period.start, period.end));
-  const sumHours = inPeriod.reduce((s,e)=> s + Number(e.hours||0), 0);
+  const workHours = inPeriod.reduce((s,e)=> s + Number(e.hours||0), 0);
+
+  const vacHoursPerDay = job.type==='minijob' ? 5 : 8;
+  const vacDaysInPeriod = vacationEntries.reduce((s,e)=> s + vacationWeekdaysInPeriod(e, period.start, period.end), 0);
+  const vacHours = vacDaysInPeriod * vacHoursPerDay;
+
+  const sumHours = workHours + vacHours;
   const sumEuro = sumHours * job.wage;
 
   // Dial
@@ -629,11 +729,15 @@ function render(){
   document.getElementById('dialUnit').textContent = 'Std. im Zeitraum';
 
   const factsEl = document.getElementById('dialFacts');
+  const vacRow = vacDaysInPeriod > 0
+    ? `<div class="row"><span>davon Urlaub</span><span class="v">${fmtHours(vacHours)} Std. (${fmtDays(vacDaysInPeriod)} Tage)</span></div>`
+    : '';
   if(job.type==='minijob'){
     const hoursWarn = sumHours > job.monthlyHourCap;
     const euroWarn = sumEuro > job.monthlyEuroCap;
     factsEl.innerHTML = `
       <div class="row"><span>Stunden</span><span class="v ${hoursWarn?'warn':''}">${fmtHours(sumHours)} / ${job.monthlyHourCap}</span></div>
+      ${vacRow}
       <div class="row"><span>Verdienst</span><span class="v ${euroWarn?'warn':''}">${fmtEuro(sumEuro)} / ${fmtEuro(job.monthlyEuroCap)}</span></div>
       <div class="row"><span>Stundenlohn</span><span class="v">${fmtEuro(job.wage)}</span></div>
       ${(hoursWarn||euroWarn) ? '<div class="row"><span class="badge warn">Grenze überschritten</span></div>' : ''}
@@ -644,30 +748,66 @@ function render(){
     const weekHours = weekEntries.reduce((s,e)=> s + Number(e.hours||0), 0);
     factsEl.innerHTML = `
       <div class="row"><span>Stunden (Zeitraum)</span><span class="v">${fmtHours(sumHours)}</span></div>
+      ${vacRow}
       <div class="row"><span>Verdienst (Zeitraum)</span><span class="v">${fmtEuro(sumEuro)}</span></div>
       <div class="row"><span>Diese Woche</span><span class="v">${fmtHours(weekHours)} / ${job.weeklyHourTarget}</span></div>
       <div class="row"><span>Stundenlohn</span><span class="v">${fmtEuro(job.wage)}</span></div>
     `;
   }
 
-  // Liste
-  const list = document.getElementById('entriesList');
-  if(inPeriod.length===0){
-    list.innerHTML = '<li class="empty">Noch keine Einträge in diesem Zeitraum.</li>';
-  } else {
-    list.innerHTML = inPeriod.map(e => `
-      <li>
-        <span class="entry-date">${fmtDate(new Date(e.date+'T12:00:00'))}</span>
-        <span class="entry-note">${e.start && e.end ? `${e.start}–${e.end} Uhr${e.breakMinutes ? ', ' + e.breakMinutes + ' Min. Pause' : ''}${e.note ? ' · ' + e.note : ''}` : (e.note || '')}</span>
-        <span class="entry-hours">${fmtHours(Number(e.hours))} Std.</span>
-        <span class="entry-actions">
-          <button class="btn edit" onclick="startEditEntry('${e.id}')">Bearbeiten</button>
-          <button class="btn danger" onclick="removeEntry('${e.id}')">Löschen</button>
-        </span>
-      </li>
-    `).join('');
-  }
+  // Liste — gruppiert nach Zeitraum, auf-/zuklappbar
+  renderWorkAccordion(period);
 }
+
+function renderWorkAccordion(currentPeriod){
+  const groups = new Map(); // key -> {start, end, items}
+  allEntries.forEach(e => {
+    const p = getPeriodForDate(e.date);
+    const key = periodKey(p.start);
+    if(!groups.has(key)) groups.set(key, {start:p.start, end:p.end, items:[]});
+    groups.get(key).items.push(e);
+  });
+  // aktuell gewählten Zeitraum immer anzeigen, auch wenn leer
+  const curKey = periodKey(currentPeriod.start);
+  if(!groups.has(curKey)) groups.set(curKey, {start:currentPeriod.start, end:currentPeriod.end, items:[]});
+
+  const sortedKeys = [...groups.keys()].sort().reverse();
+  const list = document.getElementById('entriesList');
+  list.innerHTML = sortedKeys.map(key => {
+    const g = groups.get(key);
+    const isOpen = expandedWorkPeriods.has(key);
+    const hours = g.items.reduce((s,e)=> s + Number(e.hours||0), 0);
+    const body = g.items.length === 0
+      ? '<li class="empty">Keine Einträge in diesem Zeitraum.</li>'
+      : g.items.map(e => `
+        <li>
+          <span class="entry-date">${fmtDate(new Date(e.date+'T12:00:00'))}</span>
+          <span class="entry-note">${e.start && e.end ? `${e.start}–${e.end} Uhr${e.breakMinutes ? ', ' + e.breakMinutes + ' Min. Pause' : ''}${e.note ? ' · ' + e.note : ''}` : (e.note || '')}</span>
+          <span class="entry-hours">${fmtHours(Number(e.hours))} Std.</span>
+          <span class="entry-actions">
+            <button class="btn edit" onclick="startEditEntry('${e.id}')">Bearbeiten</button>
+            <button class="btn danger" onclick="removeEntry('${e.id}')">Löschen</button>
+          </span>
+        </li>
+      `).join('');
+    return `
+      <div class="accordion-item">
+        <button type="button" class="accordion-head" onclick="toggleWorkPeriod('${key}')">
+          <span class="accordion-chevron ${isOpen?'open':''}">›</span>
+          <span class="accordion-title">${fmtDate(g.start)} – ${fmtDate(g.end)}</span>
+          <span class="accordion-meta">${g.items.length} Einträge · ${fmtHours(hours)} Std.</span>
+        </button>
+        <ul class="entries accordion-body ${isOpen?'open':''}">${body}</ul>
+      </div>
+    `;
+  }).join('');
+}
+
+window.toggleWorkPeriod = function(key){
+  if(expandedWorkPeriods.has(key)) expandedWorkPeriods.delete(key);
+  else expandedWorkPeriods.add(key);
+  render();
+};
 
 window.removeEntry = async function(id){
   if(!confirm('Diesen Eintrag wirklich löschen?')) return;
