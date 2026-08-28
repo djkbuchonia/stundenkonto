@@ -155,6 +155,14 @@
   }
   .calc-preview span{ font-family:'IBM Plex Mono',monospace; font-weight:800; color:var(--ink); font-size:15px; }
   .calc-preview.invalid span{ color:var(--red); }
+  .holiday-note{
+    margin-top:6px; font-size:12px; font-weight:700; color:var(--red);
+    background:var(--red-dim); border-radius:7px; padding:7px 10px;
+  }
+  .holiday-badge{
+    display:inline-block; font-size:9.5px; font-weight:700; padding:2px 7px; border-radius:20px;
+    background:var(--red-dim); color:var(--red); text-transform:uppercase; letter-spacing:.04em; margin-left:6px;
+  }
   .btn{
     background:var(--ink); color:var(--paper); border:none; border-radius:9px;
     padding:13px; font-size:14px; font-weight:700; cursor:pointer; letter-spacing:.02em;
@@ -324,6 +332,7 @@
         <div>
           <label>Datum</label>
           <input type="date" id="fDate">
+          <div class="holiday-note" id="fDateHolidayNote" style="display:none;"></div>
         </div>
         <div class="grid2">
           <div>
@@ -353,6 +362,7 @@
             <input type="date" id="fVacEnd">
           </div>
         </div>
+        <div class="holiday-note" id="fVacHolidayNote" style="display:none;"></div>
         <div>
           <label>Urlaubstage</label>
           <input type="number" id="fVacDaysInput" step="0.5" min="0.5" placeholder="z. B. 1">
@@ -490,6 +500,55 @@ function getCurrentWeekRange(){
 function pad2(n){ return String(n).padStart(2,'0'); }
 function toISO(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
 
+// ====== FEIERTAGE HESSEN ======
+// Gauß'sche Osterformel zur Bestimmung des Ostersonntags.
+function easterSunday(year){
+  const a = year % 19;
+  const b = Math.floor(year/100);
+  const c = year % 100;
+  const d = Math.floor(b/4);
+  const e = b % 4;
+  const f = Math.floor((b+8)/25);
+  const g = Math.floor((b-f+1)/3);
+  const h = (19*a+b-d-g+15) % 30;
+  const i = Math.floor(c/4);
+  const k = c % 4;
+  const l = (32+2*e+2*i-h-k) % 7;
+  const m = Math.floor((a+11*h+22*l)/451);
+  const month = Math.floor((h+l-7*m+114)/31);
+  const day = ((h+l-7*m+114) % 31) + 1;
+  return new Date(year, month-1, day);
+}
+
+const holidayCache = {};
+function getHessenHolidays(year){
+  if(holidayCache[year]) return holidayCache[year];
+  const easter = easterSunday(year);
+  const addDays = (d, n) => { const r = new Date(d); r.setDate(r.getDate()+n); return r; };
+  const map = new Map();
+  const add = (date, name) => map.set(toISO(date), name);
+  add(new Date(year,0,1), 'Neujahr');
+  add(addDays(easter,-2), 'Karfreitag');
+  add(addDays(easter,1), 'Ostermontag');
+  add(new Date(year,4,1), 'Tag der Arbeit');
+  add(addDays(easter,39), 'Christi Himmelfahrt');
+  add(addDays(easter,50), 'Pfingstmontag');
+  add(addDays(easter,60), 'Fronleichnam');
+  add(new Date(year,9,3), 'Tag der Deutschen Einheit');
+  add(new Date(year,9,31), 'Reformationstag');
+  add(new Date(year,11,25), '1. Weihnachtstag');
+  add(new Date(year,11,26), '2. Weihnachtstag');
+  holidayCache[year] = map;
+  return map;
+}
+// Prüft ein Datum (YYYY-MM-DD) auf einen hessischen Feiertag, liefert den Namen oder null.
+function checkHoliday(dateStr){
+  if(!dateStr) return null;
+  const year = Number(dateStr.slice(0,4));
+  const holidays = getHessenHolidays(year);
+  return holidays.get(dateStr) || null;
+}
+
 // Ermittelt den Abrechnungszeitraum (16.–15.), zu dem ein Datum gehört.
 function getPeriodForDate(dateStr){
   const d = new Date(dateStr+'T12:00:00');
@@ -556,9 +615,40 @@ function updateCalcPreview(){
     result.textContent = fmtHours(hours);
     preview.classList.remove('invalid');
   }
+
+  const holidayNote = document.getElementById('fDateHolidayNote');
+  const holidayName = checkHoliday(document.getElementById('fDate').value);
+  if(holidayName){
+    holidayNote.textContent = `⚠️ Feiertag in Hessen: ${holidayName}`;
+    holidayNote.style.display = '';
+  } else {
+    holidayNote.style.display = 'none';
+  }
 }
+// Feiertags-Regelzeiten je Job — werden vorgeschlagen, wenn ein Feiertagsdatum gewählt wird
+// und die Zeitfelder noch leer sind (manuelle Eingaben werden nicht überschrieben).
+const HOLIDAY_TIMES = {
+  minijob: { start: '10:00', end: '15:00' },   // Fashion Boots: 5 Std.
+  teilzeit: { start: '10:00', end: '18:00' }   // DSH: 8 Std.
+};
+function autofillHolidayTimes(){
+  const dateStr = document.getElementById('fDate').value;
+  if(!checkHoliday(dateStr)) return;
+  const startEl = document.getElementById('fStart');
+  const endEl = document.getElementById('fEnd');
+  if(startEl.value || endEl.value) return; // nicht überschreiben, falls schon befüllt
+  const times = HOLIDAY_TIMES[currentJob];
+  if(!times) return;
+  startEl.value = times.start;
+  endEl.value = times.end;
+}
+
 ['fStart','fEnd','fBreak'].forEach(id => {
   document.getElementById(id).addEventListener('input', updateCalcPreview);
+});
+document.getElementById('fDate').addEventListener('input', () => {
+  autofillHolidayTimes();
+  updateCalcPreview();
 });
 
 // ====== URLAUB ======
@@ -600,6 +690,29 @@ function updateVacPreview(){
   if(!daysInput.dataset.manual){
     daysInput.value = days || '';
   }
+
+  const holidayNote = document.getElementById('fVacHolidayNote');
+  const namesInRange = holidaysInRange(start, end || start);
+  if(namesInRange.length > 0){
+    holidayNote.textContent = `⚠️ Feiertag(e) in Hessen im Zeitraum: ${namesInRange.join(', ')}`;
+    holidayNote.style.display = '';
+  } else {
+    holidayNote.style.display = 'none';
+  }
+}
+// Liefert die Namen aller hessischen Feiertage in einem Datumsbereich (inklusive).
+function holidaysInRange(startStr, endStr){
+  if(!startStr) return [];
+  const names = [];
+  const s = new Date(startStr+'T12:00:00');
+  const e = new Date((endStr||startStr)+'T12:00:00');
+  const cur = new Date(s);
+  while(cur <= e){
+    const name = checkHoliday(toISO(cur));
+    if(name) names.push(name);
+    cur.setDate(cur.getDate()+1);
+  }
+  return names;
 }
 document.getElementById('fVacStart').addEventListener('input', () => {
   if(!document.getElementById('fVacEnd').value){
@@ -751,14 +864,16 @@ window.printReport = function(){
 
   const workRows = workItems.length === 0
     ? `<tr><td colspan="4" style="color:#777;">Keine Arbeitszeit-Buchungen in diesem Zeitraum.</td></tr>`
-    : workItems.map(e => `
+    : workItems.map(e => {
+      const holiday = checkHoliday(e.date);
+      return `
       <tr>
-        <td>${fmtDate(new Date(e.date+'T12:00:00'))}</td>
+        <td>${fmtDate(new Date(e.date+'T12:00:00'))}${holiday ? ` <span style="color:#C4192C;font-size:10px;">(${holiday})</span>` : ''}</td>
         <td>${e.start && e.end ? `${e.start}–${e.end} Uhr` : '–'}</td>
         <td>${e.breakMinutes ? e.breakMinutes+' Min.' : '–'}</td>
         <td class="num">${fmtHours(Number(e.hours))}</td>
       </tr>
-    `).join('');
+    `;}).join('');
 
   const vacRows = vacItems.length === 0
     ? ''
@@ -903,7 +1018,7 @@ function renderWorkAccordion(currentPeriod){
       ? '<li class="empty">Keine Einträge in diesem Zeitraum.</li>'
       : g.items.map(e => `
         <li>
-          <span class="entry-date">${fmtDate(new Date(e.date+'T12:00:00'))}</span>
+          <span class="entry-date">${fmtDate(new Date(e.date+'T12:00:00'))}${checkHoliday(e.date) ? `<span class="holiday-badge" title="${checkHoliday(e.date)}">Feiertag</span>` : ''}</span>
           <span class="entry-note">${e.start && e.end ? `${e.start}–${e.end} Uhr${e.breakMinutes ? ', ' + e.breakMinutes + ' Min. Pause' : ''}${e.note ? ' · ' + e.note : ''}` : (e.note || '')}</span>
           <span class="entry-hours">${fmtHours(Number(e.hours))} Std.</span>
           <span class="entry-actions">
