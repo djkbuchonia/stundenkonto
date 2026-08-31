@@ -215,6 +215,7 @@
   .report-table td.diff-neg{ color:var(--gray); }
   .report-table tfoot td{ font-weight:800; border-top:2px solid var(--ink); border-bottom:none; padding-top:10px; }
   .report-table tr.report-empty-year td{ color:var(--gray); }
+  .report-period-sub{ display:block; font-size:10px; color:var(--gray); font-weight:500; font-family:'IBM Plex Mono',monospace; margin-top:1px; }
 
   .badge{
     display:inline-block; font-size:10px; font-weight:700; padding:3px 8px; border-radius:20px;
@@ -975,26 +976,34 @@ function renderYearlyReport(){
 
   const soll = job.type==='minijob' ? job.monthlyHourCap : (job.weeklyHourTarget * 52 / 12);
   const vacHoursPerDay = job.type==='minijob' ? 5 : 8;
+  const todayISO = toISO(new Date());
 
+  // Die "Monate" der Auswertung folgen dem Abrechnungszirkel (16.–15.), nicht dem Kalendermonat.
+  // "Januar" = 16.12. (Vorjahr) – 15.01., "Februar" = 16.01. – 15.02., usw.
   const monthNames = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
   let yearIstSum = 0;
+  let completedCount = 0;
   let rows = '';
 
   for(let m=0; m<12; m++){
-    const monthStart = new Date(reportYear, m, 1);
-    const monthEnd = new Date(reportYear, m+1, 0);
+    const periodStart = new Date(reportYear, m-1, 16);
+    const periodEnd = new Date(reportYear, m, 15);
+    // Noch nicht abgeschlossene Zeiträume (Enddatum in der Zukunft) werden übersprungen.
+    if(toISO(periodEnd) > todayISO) continue;
+
     const workHours = allEntries
-      .filter(e => dateInRange(e.date, monthStart, monthEnd))
+      .filter(e => dateInRange(e.date, periodStart, periodEnd))
       .reduce((s,e)=> s + Number(e.hours||0), 0);
-    const vacDays = vacationEntries.reduce((s,e)=> s + vacationWeekdaysInPeriod(e, monthStart, monthEnd), 0);
+    const vacDays = vacationEntries.reduce((s,e)=> s + vacationWeekdaysInPeriod(e, periodStart, periodEnd), 0);
     const ist = workHours + vacDays*vacHoursPerDay;
     yearIstSum += ist;
+    completedCount++;
     const diff = ist - soll;
     const diffClass = diff >= 0 ? 'diff-pos' : 'diff-neg';
     const diffLabel = (diff >= 0 ? '+' : '') + fmtHours(diff);
     rows += `
       <tr>
-        <td>${monthNames[m]}</td>
+        <td>${monthNames[m]}<span class="report-period-sub">${fmtDate(periodStart)}–${fmtDate(periodEnd)}</span></td>
         <td class="num">${fmtHours(soll)}</td>
         <td class="num">${fmtHours(ist)}</td>
         <td class="num ${diffClass}">${diffLabel}</td>
@@ -1002,16 +1011,21 @@ function renderYearlyReport(){
     `;
   }
 
-  document.getElementById('reportTableBody').innerHTML = rows;
+  document.getElementById('reportTableBody').innerHTML = rows || '<tr class="report-empty-year"><td colspan="4">Noch keine abgeschlossenen Zeiträume in diesem Jahr.</td></tr>';
 
-  const yearSoll = soll * 12;
+  if(completedCount === 0){
+    document.getElementById('reportTableFoot').innerHTML = '';
+    return;
+  }
+
+  const yearSoll = soll * completedCount;
   const yearDiff = yearIstSum - yearSoll;
   const yearDiffClass = yearDiff >= 0 ? 'diff-pos' : 'diff-neg';
   const yearDiffLabel = (yearDiff >= 0 ? '+' : '') + fmtHours(yearDiff);
-  const avgIst = yearIstSum / 12;
+  const avgIst = yearIstSum / completedCount;
   document.getElementById('reportTableFoot').innerHTML = `
     <tr>
-      <td>Summe ${reportYear}</td>
+      <td>Summe (${completedCount} abgerechnete Monate)</td>
       <td class="num">${fmtHours(yearSoll)}</td>
       <td class="num">${fmtHours(yearIstSum)}</td>
       <td class="num ${yearDiffClass}">${yearDiffLabel}</td>
