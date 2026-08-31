@@ -207,6 +207,15 @@
   .accordion-body.open{ max-height:none; padding-bottom:6px; }
   .accordion-body li{ padding-left:2px; padding-right:2px; }
 
+  .report-table{ width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+  .report-table th, .report-table td{ padding:8px 4px; text-align:left; border-bottom:1px solid var(--line); }
+  .report-table th{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--gray); font-weight:700; }
+  .report-table td.num, .report-table th.num{ text-align:right; font-family:'IBM Plex Mono',monospace; }
+  .report-table td.diff-pos{ color:var(--ok); }
+  .report-table td.diff-neg{ color:var(--gray); }
+  .report-table tfoot td{ font-weight:800; border-top:2px solid var(--ink); border-bottom:none; padding-top:10px; }
+  .report-table tr.report-empty-year td{ color:var(--gray); }
+
   .badge{
     display:inline-block; font-size:10px; font-weight:700; padding:3px 8px; border-radius:20px;
     text-transform:uppercase; letter-spacing:.05em; margin-left:6px;
@@ -392,6 +401,22 @@
     <div class="entries" id="vacationList"></div>
   </div>
 
+  <div class="card">
+    <h2>Jahresauswertung</h2>
+    <div class="period-nav">
+      <button onclick="shiftReportYear(-1)">‹</button>
+      <div class="period-label" id="reportYearLabel"></div>
+      <button onclick="shiftReportYear(1)">›</button>
+    </div>
+    <table class="report-table">
+      <thead>
+        <tr><th>Monat</th><th class="num">Soll</th><th class="num">Ist</th><th class="num">Differenz</th></tr>
+      </thead>
+      <tbody id="reportTableBody"></tbody>
+      <tfoot id="reportTableFoot"></tfoot>
+    </table>
+  </div>
+
 </main>
 
 <footer>Fashion Boots &amp; DSH · lokal synchronisiert über Firebase</footer>
@@ -441,6 +466,7 @@ const JOBS = {
 };
 
 let currentJob = "minijob";
+let reportYear = new Date().getFullYear();
 let periodOffset = 0; // 0 = aktueller Zeitraum, -1 = vorheriger, ...
 let unsubscribe = null;
 let allEntries = []; // aktuell geladene Einträge für den aktiven Job
@@ -564,13 +590,17 @@ function periodKey(start){
   return `${start.getFullYear()}-${pad2(start.getMonth()+1)}-16`;
 }
 // Wie viele Werktage eines Urlaubseintrags in einen bestimmten Zeitraum fallen (für Überschneidungen an der Zeitraumgrenze).
+// Wichtig: Vergleich rein über Datums-Strings (YYYY-MM-DD), damit Uhrzeit-Unterschiede
+// zwischen Eintragsdatum (T12:00) und Zeitraumgrenze (Mitternacht) keine Rolle spielen.
 function vacationWeekdaysInPeriod(entry, periodStart, periodEnd){
-  const entryStart = new Date(entry.startDate+'T12:00:00');
-  const entryEnd = new Date((entry.endDate||entry.startDate)+'T12:00:00');
-  const s = entryStart > periodStart ? entryStart : periodStart;
-  const e = entryEnd < periodEnd ? entryEnd : periodEnd;
+  const entryStartISO = entry.startDate;
+  const entryEndISO = entry.endDate || entry.startDate;
+  const periodStartISO = toISO(periodStart);
+  const periodEndISO = toISO(periodEnd);
+  const s = entryStartISO > periodStartISO ? entryStartISO : periodStartISO;
+  const e = entryEndISO < periodEndISO ? entryEndISO : periodEndISO;
   if(s > e) return 0;
-  return countWeekdays(toISO(s), toISO(e));
+  return countWeekdays(s, e);
 }
 
 function fmtDate(d){
@@ -582,9 +612,10 @@ function fmtEuro(n){
 function fmtHours(n){
   return n.toLocaleString('de-DE', {minimumFractionDigits:1, maximumFractionDigits:2});
 }
+// Prüft, ob ein Datum (YYYY-MM-DD) in einem Zeitraum liegt — reiner String-Vergleich,
+// damit der letzte Tag des Zeitraums (z. B. der 15.) korrekt eingeschlossen wird.
 function dateInRange(dateStr, start, end){
-  const d = new Date(dateStr+'T12:00:00');
-  return d >= start && d <= end;
+  return dateStr >= toISO(start) && dateStr <= toISO(end);
 }
 
 // Berechnet Arbeitsstunden aus Anfangszeit, Endzeit (HH:MM) und Pause in Minuten.
@@ -932,6 +963,68 @@ window.printReport = function(){
   window.print();
 };
 
+// ====== JAHRESAUSWERTUNG ======
+window.shiftReportYear = function(delta){
+  reportYear += delta;
+  renderYearlyReport();
+};
+
+function renderYearlyReport(){
+  const job = JOBS[currentJob];
+  document.getElementById('reportYearLabel').textContent = reportYear;
+
+  const soll = job.type==='minijob' ? job.monthlyHourCap : (job.weeklyHourTarget * 52 / 12);
+  const vacHoursPerDay = job.type==='minijob' ? 5 : 8;
+
+  const monthNames = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+  let yearIstSum = 0;
+  let rows = '';
+
+  for(let m=0; m<12; m++){
+    const monthStart = new Date(reportYear, m, 1);
+    const monthEnd = new Date(reportYear, m+1, 0);
+    const workHours = allEntries
+      .filter(e => dateInRange(e.date, monthStart, monthEnd))
+      .reduce((s,e)=> s + Number(e.hours||0), 0);
+    const vacDays = vacationEntries.reduce((s,e)=> s + vacationWeekdaysInPeriod(e, monthStart, monthEnd), 0);
+    const ist = workHours + vacDays*vacHoursPerDay;
+    yearIstSum += ist;
+    const diff = ist - soll;
+    const diffClass = diff >= 0 ? 'diff-pos' : 'diff-neg';
+    const diffLabel = (diff >= 0 ? '+' : '') + fmtHours(diff);
+    rows += `
+      <tr>
+        <td>${monthNames[m]}</td>
+        <td class="num">${fmtHours(soll)}</td>
+        <td class="num">${fmtHours(ist)}</td>
+        <td class="num ${diffClass}">${diffLabel}</td>
+      </tr>
+    `;
+  }
+
+  document.getElementById('reportTableBody').innerHTML = rows;
+
+  const yearSoll = soll * 12;
+  const yearDiff = yearIstSum - yearSoll;
+  const yearDiffClass = yearDiff >= 0 ? 'diff-pos' : 'diff-neg';
+  const yearDiffLabel = (yearDiff >= 0 ? '+' : '') + fmtHours(yearDiff);
+  const avgIst = yearIstSum / 12;
+  document.getElementById('reportTableFoot').innerHTML = `
+    <tr>
+      <td>Summe ${reportYear}</td>
+      <td class="num">${fmtHours(yearSoll)}</td>
+      <td class="num">${fmtHours(yearIstSum)}</td>
+      <td class="num ${yearDiffClass}">${yearDiffLabel}</td>
+    </tr>
+    <tr>
+      <td>Ø pro Monat</td>
+      <td class="num">${fmtHours(soll)}</td>
+      <td class="num">${fmtHours(avgIst)}</td>
+      <td class="num ${avgIst-soll>=0?'diff-pos':'diff-neg'}">${(avgIst-soll>=0?'+':'')+fmtHours(avgIst-soll)}</td>
+    </tr>
+  `;
+}
+
 function render(){
   const job = JOBS[currentJob];
   const period = getBillingPeriod(periodOffset);
@@ -994,6 +1087,7 @@ function render(){
 
   // Liste — gruppiert nach Zeitraum, auf-/zuklappbar
   renderWorkAccordion(period);
+  renderYearlyReport();
 }
 
 function renderWorkAccordion(currentPeriod){
