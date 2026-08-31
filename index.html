@@ -216,6 +216,12 @@
   .report-table tfoot td{ font-weight:800; border-top:2px solid var(--ink); border-bottom:none; padding-top:10px; }
   .report-table tr.report-empty-year td{ color:var(--gray); }
   .report-period-sub{ display:block; font-size:10px; color:var(--gray); font-weight:500; font-family:'IBM Plex Mono',monospace; margin-top:1px; }
+  .report-input{
+    width:72px; padding:6px 7px; border:1.5px solid var(--line); border-radius:6px;
+    font-family:'IBM Plex Mono',monospace; font-size:13px; text-align:right; background:var(--paper); color:var(--ink);
+  }
+  .report-input:focus{ outline:none; border-color:var(--ink); }
+  .report-hint{ font-size:11px; color:var(--gray); margin-top:10px; }
 
   .badge{
     display:inline-block; font-size:10px; font-weight:700; padding:3px 8px; border-radius:20px;
@@ -411,11 +417,13 @@
     </div>
     <table class="report-table">
       <thead>
-        <tr><th>Monat</th><th class="num">Soll</th><th class="num">Ist</th><th class="num">Differenz</th></tr>
+        <tr><th>Monat</th><th class="num">Soll</th><th class="num">Ist</th><th class="num">Abgerechnet</th><th class="num">Differenz</th></tr>
       </thead>
       <tbody id="reportTableBody"></tbody>
       <tfoot id="reportTableFoot"></tfoot>
     </table>
+    <div class="report-hint">„Abgerechnet" = Stunden laut Lohnabrechnung des Arbeitgebers, zum Abgleich von Hand eintragen.</div>
+    <button type="button" class="btn secondary print-btn" onclick="printYearlyReport()">🖨️ Jahresauswertung drucken</button>
   </div>
 
 </main>
@@ -481,6 +489,8 @@ let vacationDaysTotal = 0;
 let vacationEntries = [];
 let expandedWorkPeriods = new Set([periodKey(getBillingPeriod(0).start)]);
 let expandedVacationPeriods = new Set([periodKey(getBillingPeriod(0).start)]);
+let payrollUnsub = null;
+let payrollData = new Map(); // periodKey ("YYYY-MM-16") -> Stunden lt. Lohnabrechnung
 
 window.switchJob = function(job){
   currentJob = job;
@@ -493,6 +503,7 @@ window.switchJob = function(job){
   expandedVacationPeriods = new Set([key]);
   listenToJob();
   listenToVacation();
+  listenToPayroll();
 };
 
 window.shiftPeriod = function(delta){
@@ -776,6 +787,30 @@ function listenToVacation(){
   });
 }
 
+// ====== ABGERECHNETE STUNDEN (Lohnabrechnung) ======
+function listenToPayroll(){
+  if(payrollUnsub) payrollUnsub();
+  const q = collection(db, 'payroll_'+currentJob);
+  payrollUnsub = onSnapshot(q, snap => {
+    payrollData = new Map();
+    snap.forEach(d => payrollData.set(d.id, Number(d.data().hours)));
+    renderYearlyReport();
+  });
+}
+
+window.savePayrollHours = async function(periodKeyStr, rawValue){
+  const val = parseFloat(String(rawValue).replace(',', '.'));
+  try{
+    if(rawValue === '' || isNaN(val)){
+      await deleteDoc(doc(db, 'payroll_'+currentJob, periodKeyStr));
+    } else {
+      await setDoc(doc(db, 'payroll_'+currentJob, periodKeyStr), {hours: val});
+    }
+  } catch(err){
+    // still allow local retry — Firebase-Konfiguration könnte fehlen
+  }
+};
+
 function renderVacation(){
   const yearEntries = vacationEntries.filter(e => e.startDate && e.startDate.slice(0,4)===String(currentYear));
   const taken = yearEntries.reduce((s,e)=> s + Number(e.days||0), 0);
@@ -970,25 +1005,18 @@ window.shiftReportYear = function(delta){
   renderYearlyReport();
 };
 
-function renderYearlyReport(){
+// Berechnet die Zeilen der Jahresauswertung für ein Jahr (gemeinsam genutzt von Bildschirm- und Druckansicht).
+function computeYearlyReportRows(year){
   const job = JOBS[currentJob];
-  document.getElementById('reportYearLabel').textContent = reportYear;
-
   const soll = job.type==='minijob' ? job.monthlyHourCap : (job.weeklyHourTarget * 52 / 12);
   const vacHoursPerDay = job.type==='minijob' ? 5 : 8;
   const todayISO = toISO(new Date());
-
-  // Die "Monate" der Auswertung folgen dem Abrechnungszirkel (16.–15.), nicht dem Kalendermonat.
-  // "Januar" = 16.12. (Vorjahr) – 15.01., "Februar" = 16.01. – 15.02., usw.
   const monthNames = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
-  let yearIstSum = 0;
-  let completedCount = 0;
-  let rows = '';
 
+  const items = [];
   for(let m=0; m<12; m++){
-    const periodStart = new Date(reportYear, m-1, 16);
-    const periodEnd = new Date(reportYear, m, 15);
-    // Noch nicht abgeschlossene Zeiträume (Enddatum in der Zukunft) werden übersprungen.
+    const periodStart = new Date(year, m-1, 16);
+    const periodEnd = new Date(year, m, 15);
     if(toISO(periodEnd) > todayISO) continue;
 
     const workHours = allEntries
@@ -996,48 +1024,126 @@ function renderYearlyReport(){
       .reduce((s,e)=> s + Number(e.hours||0), 0);
     const vacDays = vacationEntries.reduce((s,e)=> s + vacationWeekdaysInPeriod(e, periodStart, periodEnd), 0);
     const ist = workHours + vacDays*vacHoursPerDay;
-    yearIstSum += ist;
-    completedCount++;
-    const diff = ist - soll;
-    const diffClass = diff >= 0 ? 'diff-pos' : 'diff-neg';
-    const diffLabel = (diff >= 0 ? '+' : '') + fmtHours(diff);
-    rows += `
-      <tr>
-        <td>${monthNames[m]}<span class="report-period-sub">${fmtDate(periodStart)}–${fmtDate(periodEnd)}</span></td>
-        <td class="num">${fmtHours(soll)}</td>
-        <td class="num">${fmtHours(ist)}</td>
-        <td class="num ${diffClass}">${diffLabel}</td>
-      </tr>
-    `;
+    const key = periodKey(periodStart);
+    const abgerechnet = payrollData.has(key) ? payrollData.get(key) : null;
+    const diff = abgerechnet===null ? null : abgerechnet - ist;
+
+    items.push({ month: monthNames[m], key, periodStart, periodEnd, soll, ist, abgerechnet, diff });
   }
+  return { job, soll, items };
+}
 
-  document.getElementById('reportTableBody').innerHTML = rows || '<tr class="report-empty-year"><td colspan="4">Noch keine abgeschlossenen Zeiträume in diesem Jahr.</td></tr>';
+function renderYearlyReport(){
+  document.getElementById('reportYearLabel').textContent = reportYear;
+  const { soll, items } = computeYearlyReportRows(reportYear);
 
-  if(completedCount === 0){
+  const rows = items.map(r => `
+    <tr>
+      <td>${r.month}<span class="report-period-sub">${fmtDate(r.periodStart)}–${fmtDate(r.periodEnd)}</span></td>
+      <td class="num">${fmtHours(r.soll)}</td>
+      <td class="num">${fmtHours(r.ist)}</td>
+      <td class="num">
+        <input type="number" step="0.1" class="report-input" value="${r.abgerechnet!==null ? r.abgerechnet : ''}"
+               placeholder="–" onchange="savePayrollHours('${r.key}', this.value)">
+      </td>
+      <td class="num ${r.diff===null ? '' : (r.diff>=0?'diff-pos':'diff-neg')}">${r.diff===null ? '–' : (r.diff>=0?'+':'')+fmtHours(r.diff)}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('reportTableBody').innerHTML = rows || '<tr class="report-empty-year"><td colspan="5">Noch keine abgeschlossenen Zeiträume in diesem Jahr.</td></tr>';
+
+  if(items.length === 0){
     document.getElementById('reportTableFoot').innerHTML = '';
     return;
   }
 
-  const yearSoll = soll * completedCount;
+  const yearIstSum = items.reduce((s,r)=> s + r.ist, 0);
+  const yearSoll = soll * items.length;
   const yearDiff = yearIstSum - yearSoll;
-  const yearDiffClass = yearDiff >= 0 ? 'diff-pos' : 'diff-neg';
-  const yearDiffLabel = (yearDiff >= 0 ? '+' : '') + fmtHours(yearDiff);
-  const avgIst = yearIstSum / completedCount;
+
+  const abgerechnetItems = items.filter(r => r.abgerechnet !== null);
+  const abgerechnetSum = abgerechnetItems.reduce((s,r)=> s + r.abgerechnet, 0);
+  const avgAbgerechnet = abgerechnetItems.length ? abgerechnetSum/abgerechnetItems.length : null;
+  const avgDiff = abgerechnetItems.length ? abgerechnetItems.reduce((s,r)=> s + r.diff, 0)/abgerechnetItems.length : null;
+
+  const avgIst = yearIstSum / items.length;
+
   document.getElementById('reportTableFoot').innerHTML = `
     <tr>
-      <td>Summe (${completedCount} abgerechnete Monate)</td>
+      <td>Summe (${items.length} abgerechnete Monate)</td>
       <td class="num">${fmtHours(yearSoll)}</td>
       <td class="num">${fmtHours(yearIstSum)}</td>
-      <td class="num ${yearDiffClass}">${yearDiffLabel}</td>
+      <td class="num">${abgerechnetItems.length ? fmtHours(abgerechnetSum) : '–'}</td>
+      <td class="num ${yearDiff>=0?'diff-pos':'diff-neg'}">${(yearDiff>=0?'+':'')+fmtHours(yearDiff)}</td>
     </tr>
     <tr>
       <td>Ø pro Monat</td>
       <td class="num">${fmtHours(soll)}</td>
       <td class="num">${fmtHours(avgIst)}</td>
-      <td class="num ${avgIst-soll>=0?'diff-pos':'diff-neg'}">${(avgIst-soll>=0?'+':'')+fmtHours(avgIst-soll)}</td>
+      <td class="num">${avgAbgerechnet!==null ? fmtHours(avgAbgerechnet) : '–'}</td>
+      <td class="num ${avgDiff===null?'':(avgDiff>=0?'diff-pos':'diff-neg')}">${avgDiff===null?'–':(avgDiff>=0?'+':'')+fmtHours(avgDiff)}</td>
     </tr>
   `;
 }
+
+// ====== JAHRESAUSWERTUNG DRUCKEN ======
+window.printYearlyReport = function(){
+  const job = JOBS[currentJob];
+  const { soll, items } = computeYearlyReportRows(reportYear);
+
+  const rows = items.length === 0
+    ? `<tr><td colspan="5" style="color:#777;">Keine abgeschlossenen Zeiträume in diesem Jahr.</td></tr>`
+    : items.map(r => `
+      <tr>
+        <td>${r.month} (${fmtDate(r.periodStart)}–${fmtDate(r.periodEnd)})</td>
+        <td class="num">${fmtHours(r.soll)}</td>
+        <td class="num">${fmtHours(r.ist)}</td>
+        <td class="num">${r.abgerechnet!==null ? fmtHours(r.abgerechnet) : '–'}</td>
+        <td class="num">${r.diff===null ? '–' : (r.diff>=0?'+':'')+fmtHours(r.diff)}</td>
+      </tr>
+    `).join('');
+
+  const yearIstSum = items.reduce((s,r)=> s + r.ist, 0);
+  const yearSoll = soll * items.length;
+  const abgerechnetItems = items.filter(r => r.abgerechnet !== null);
+  const abgerechnetSum = abgerechnetItems.reduce((s,r)=> s + r.abgerechnet, 0);
+  const avgIst = items.length ? yearIstSum/items.length : 0;
+  const avgAbgerechnet = abgerechnetItems.length ? abgerechnetSum/abgerechnetItems.length : null;
+
+  document.getElementById('printReport').innerHTML = `
+    <div class="pr-header">
+      <div>
+        <h1>Jahresauswertung — ${job.label}</h1>
+        <div class="pr-sub">${job.company} · ${job.type==='minijob' ? 'Minijob' : 'Teilzeit'} · Soll ${fmtHours(soll)} Std./Monat</div>
+      </div>
+      <div class="pr-period">Jahr<br>${reportYear}</div>
+    </div>
+
+    <div class="pr-summary">
+      <div><span class="v">${items.length}</span>abger. Monate</div>
+      <div><span class="v">${fmtHours(avgIst)}</span>Ø Ist Std./Monat</div>
+      <div><span class="v">${avgAbgerechnet!==null ? fmtHours(avgAbgerechnet) : '–'}</span>Ø Abgerechnet Std./Monat</div>
+    </div>
+
+    <table class="pr-table">
+      <thead><tr><th>Zeitraum</th><th class="num">Soll</th><th class="num">Ist</th><th class="num">Abgerechnet</th><th class="num">Differenz</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot>
+        <tr>
+          <td>Summe</td>
+          <td class="num">${fmtHours(yearSoll)}</td>
+          <td class="num">${fmtHours(yearIstSum)}</td>
+          <td class="num">${abgerechnetItems.length ? fmtHours(abgerechnetSum) : '–'}</td>
+          <td class="num"></td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="pr-footer">Erstellt am ${fmtDate(new Date())} · Fashion Boots &amp; DSH Stundenkonto</div>
+  `;
+
+  window.print();
+};
 
 function render(){
   const job = JOBS[currentJob];
@@ -1304,6 +1410,7 @@ updateVacPreview();
 
 listenToJob();
 listenToVacation();
+listenToPayroll();
 
 // Service Worker für PWA-Funktion
 if('serviceWorker' in navigator){
